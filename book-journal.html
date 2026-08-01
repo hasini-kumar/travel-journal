@@ -1,0 +1,829 @@
+import React, { useState, useRef, useEffect } from 'react';
+import { BackgroundTheme, CanvasItem, DayEntry, PhotoFrameStyle, StickerType, StickyColor } from '../types';
+import { STICKER_CATALOG, StickerGraphic } from '../lib/stickers';
+import { BACKGROUND_THEMES, STICKY_COLOR_MAP } from '../lib/sampleData';
+import { 
+  ArrowLeft, 
+  Image as ImageIcon, 
+  StickyNote, 
+  Smile, 
+  Palette, 
+  Trash2, 
+  RotateCw, 
+  ZoomIn, 
+  Layers, 
+  MapPin, 
+  Calendar,
+  Upload,
+  Plus
+} from 'lucide-react';
+
+interface ScrapbookCanvasProps {
+  currentDateStr: string;
+  dayEntry: DayEntry;
+  onUpdateDayEntry: (dateStr: string, updatedEntry: DayEntry) => void;
+  onBackToCalendar: () => void;
+  onSelectDate: (dateStr: string) => void;
+}
+
+const FRAME_STYLES: { id: PhotoFrameStyle; name: string; icon: string }[] = [
+  { id: 'polaroid', name: 'Classic Polaroid', icon: '🖼️' },
+  { id: 'vintage-tape', name: 'Vintage Tape', icon: '🩹' },
+  { id: 'torn-paper', name: 'Torn Paper Edge', icon: '📜' },
+  { id: 'circle', name: 'Circular Badge', icon: '⭕' },
+  { id: 'postage-stamp', name: 'Postage Stamp', icon: '📮' },
+  { id: 'rounded-gold', name: 'Smooth Gold Rim', icon: '✨' },
+];
+
+export const ScrapbookCanvas: React.FC<ScrapbookCanvasProps> = ({
+  currentDateStr,
+  dayEntry,
+  onUpdateDayEntry,
+  onBackToCalendar,
+  onSelectDate,
+}) => {
+  const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'stickers' | 'photos' | 'notes' | 'themes'>('stickers');
+  const [selectedFrameStyle, setSelectedFrameStyle] = useState<PhotoFrameStyle>('polaroid');
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragOffset, setDragOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Parse location and theme with fallback
+  const location = dayEntry.location || "Unmapped Adventure";
+  const currentTheme = dayEntry.theme || 'warm-cream';
+  const items = dayEntry.items || [];
+
+  // Helper to update items
+  const updateItems = (newItems: CanvasItem[]) => {
+    onUpdateDayEntry(currentDateStr, {
+      ...dayEntry,
+      items: newItems,
+    });
+  };
+
+  // Helper to change theme
+  const setTheme = (theme: BackgroundTheme) => {
+    onUpdateDayEntry(currentDateStr, {
+      ...dayEntry,
+      theme,
+    });
+  };
+
+  // Helper to update location
+  const updateLocation = (loc: string) => {
+    onUpdateDayEntry(currentDateStr, {
+      ...dayEntry,
+      location: loc,
+    });
+  };
+
+  // --- ADD NEW ITEMS ---
+  const addSticker = (stickerType: StickerType) => {
+    const newItem: CanvasItem = {
+      id: `sticker-${Date.now()}`,
+      type: 'sticker',
+      x: 35 + Math.random() * 20,
+      y: 30 + Math.random() * 20,
+      scale: 1,
+      rotation: Math.floor(Math.random() * 24) - 12,
+      zIndex: items.length + 1,
+      stickerType,
+    };
+    updateItems([...items, newItem]);
+    setSelectedItemId(newItem.id);
+  };
+
+  const addStickyNote = (color: StickyColor) => {
+    const newItem: CanvasItem = {
+      id: `note-${Date.now()}`,
+      type: 'sticky-note',
+      x: 55 + Math.random() * 15,
+      y: 25 + Math.random() * 20,
+      scale: 1,
+      rotation: Math.floor(Math.random() * 10) - 5,
+      zIndex: items.length + 1,
+      text: 'Click here to write a travel memory...',
+      color,
+    };
+    updateItems([...items, newItem]);
+    setSelectedItemId(newItem.id);
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const url = event.target?.result as string;
+        if (url) {
+          const newItem: CanvasItem = {
+            id: `photo-${Date.now()}`,
+            type: 'photo',
+            x: 20 + Math.random() * 20,
+            y: 20 + Math.random() * 20,
+            scale: 1,
+            rotation: Math.floor(Math.random() * 12) - 6,
+            zIndex: items.length + 1,
+            url,
+            caption: 'New Memory Frame 📸',
+            frameStyle: selectedFrameStyle,
+          };
+          updateItems([...items, newItem]);
+          setSelectedItemId(newItem.id);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  // --- DRAG MECHANICS ---
+  const handlePointerDown = (e: React.PointerEvent, id: string) => {
+    e.stopPropagation();
+    setSelectedItemId(id);
+    setIsDragging(true);
+
+    if (canvasRef.current) {
+      const rect = canvasRef.current.getBoundingClientRect();
+      const item = items.find((i) => i.id === id);
+      if (item) {
+        const itemPxX = (item.x / 100) * rect.width;
+        const itemPxY = (item.y / 100) * rect.height;
+        setDragOffset({
+          x: e.clientX - rect.left - itemPxX,
+          y: e.clientY - rect.top - itemPxY,
+        });
+      }
+    }
+  };
+
+  const handlePointerMove = (e: React.PointerEvent) => {
+    if (!isDragging || !selectedItemId || !canvasRef.current) return;
+
+    const rect = canvasRef.current.getBoundingClientRect();
+    const newPxX = e.clientX - rect.left - dragOffset.x;
+    const newPxY = e.clientY - rect.top - dragOffset.y;
+
+    // Convert back to percentages (0-100%)
+    let pctX = (newPxX / rect.width) * 100;
+    let pctY = (newPxY / rect.height) * 100;
+
+    // Constrain within margins
+    pctX = Math.max(2, Math.min(88, pctX));
+    pctY = Math.max(2, Math.min(85, pctY));
+
+    const updated = items.map((item) =>
+      item.id === selectedItemId ? { ...item, x: pctX, y: pctY } : item
+    );
+    updateItems(updated);
+  };
+
+  const handlePointerUp = () => {
+    setIsDragging(false);
+  };
+
+  // --- ITEM CONTROLS ---
+  const updateSelectedProp = (key: keyof CanvasItem, value: any) => {
+    if (!selectedItemId) return;
+    const updated = items.map((item) =>
+      item.id === selectedItemId ? { ...item, [key]: value } : item
+    );
+    updateItems(updated);
+  };
+
+  const deleteSelectedItem = () => {
+    if (!selectedItemId) return;
+    updateItems(items.filter((item) => item.id !== selectedItemId));
+    setSelectedItemId(null);
+  };
+
+  const bringToFront = () => {
+    if (!selectedItemId) return;
+    const maxZ = Math.max(...items.map((i) => i.zIndex), 0);
+    updateSelectedProp('zIndex', maxZ + 1);
+  };
+
+  const selectedItem = items.find((i) => i.id === selectedItemId);
+
+  // Background Theme CSS Class lookup
+  const themeObj = BACKGROUND_THEMES.find((t) => t.id === currentTheme);
+  const themeCssClass = themeObj ? themeObj.cssClass : 'paper-warm-cream';
+
+  return (
+    <div 
+      className="min-h-screen bg-artistic-canvas flex flex-col items-center justify-start p-2 md:p-6 relative select-none overflow-x-hidden"
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onClick={() => setSelectedItemId(null)}
+    >
+      {/* Top Bar Navigation */}
+      <header className="w-full max-w-6xl flex flex-wrap items-center justify-between gap-3 mb-4 z-20 text-[#e0ddd7] text-xs font-serif tracking-widest uppercase">
+        
+        {/* Left: Back to Calendar */}
+        <button
+          onClick={onBackToCalendar}
+          className="flex items-center space-x-2 hover:text-white transition-colors cursor-pointer"
+        >
+          <ArrowLeft className="w-4 h-4 text-[#bcaaa4]" />
+          <span>← Calendar</span>
+        </button>
+
+        {/* Center: Location & Date Tag */}
+        <div className="flex items-center space-x-3">
+          <div className="flex items-center space-x-1.5 bg-white/10 px-3 py-1 rounded-full border border-white/20">
+            <MapPin className="w-3.5 h-3.5 text-[#bcaaa4]" />
+            <input
+              type="text"
+              value={location}
+              onChange={(e) => updateLocation(e.target.value)}
+              placeholder="Tag location..."
+              className="bg-transparent text-xs font-serif text-[#e0ddd7] focus:outline-none w-28 md:w-36 truncate"
+            />
+          </div>
+
+          <div className="flex items-center space-x-1.5 bg-white/10 px-3 py-1 rounded-full border border-white/20">
+            <Calendar className="w-3.5 h-3.5 text-[#bcaaa4]" />
+            <input
+              type="date"
+              value={currentDateStr}
+              onChange={(e) => onSelectDate(e.target.value)}
+              className="bg-transparent text-xs font-serif text-[#e0ddd7] focus:outline-none cursor-pointer"
+            />
+          </div>
+        </div>
+
+        {/* Right: Quick Hint */}
+        <div className="text-[10px] text-[#bcaaa4] font-serif italic hidden md:block lowercase tracking-normal">
+          {selectedItem ? 'object selected • drag to move' : 'click item to select'}
+        </div>
+      </header>
+
+      {/* MAIN LAYOUT: Sidebar Toolbar + Open Journal Canvas */}
+      <div className="w-full max-w-6xl flex flex-col md:flex-row gap-4 items-start relative z-10">
+        
+        {/* LEFT TOOLBAR / PALETTE */}
+        <aside className="w-full md:w-72 bg-[#2c2a27]/90 border border-[#4e342e] rounded-2xl p-4 text-[#e0ddd7] shadow-2xl backdrop-blur-md shrink-0" onClick={(e) => e.stopPropagation()}>
+          
+          {/* Navigation Tabs */}
+          <div className="grid grid-cols-4 gap-1 bg-[#1c1a18] p-1 rounded-xl mb-4 border border-[#4e342e] text-xs font-bold">
+            <button
+              onClick={() => setActiveTab('stickers')}
+              className={`py-2 rounded-lg flex flex-col items-center justify-center space-y-1 transition-all cursor-pointer ${
+                activeTab === 'stickers' ? 'bg-[#8d6e63] text-white shadow-md' : 'hover:bg-[#3a3733] text-[#bcaaa4]'
+              }`}
+            >
+              <Smile className="w-4 h-4" />
+              <span className="text-[10px] uppercase font-serif">Stickers</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('photos')}
+              className={`py-2 rounded-lg flex flex-col items-center justify-center space-y-1 transition-all cursor-pointer ${
+                activeTab === 'photos' ? 'bg-[#8d6e63] text-white shadow-md' : 'hover:bg-[#3a3733] text-[#bcaaa4]'
+              }`}
+            >
+              <ImageIcon className="w-4 h-4" />
+              <span className="text-[10px] uppercase font-serif">Photos</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('notes')}
+              className={`py-2 rounded-lg flex flex-col items-center justify-center space-y-1 transition-all cursor-pointer ${
+                activeTab === 'notes' ? 'bg-[#8d6e63] text-white shadow-md' : 'hover:bg-[#3a3733] text-[#bcaaa4]'
+              }`}
+            >
+              <StickyNote className="w-4 h-4" />
+              <span className="text-[10px] uppercase font-serif">Notes</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('themes')}
+              className={`py-2 rounded-lg flex flex-col items-center justify-center space-y-1 transition-all cursor-pointer ${
+                activeTab === 'themes' ? 'bg-[#8d6e63] text-white shadow-md' : 'hover:bg-[#3a3733] text-[#bcaaa4]'
+              }`}
+            >
+              <Palette className="w-4 h-4" />
+              <span className="text-[10px] uppercase font-serif">Theme</span>
+            </button>
+          </div>
+
+          {/* TAB 1: STICKERS PALETTE */}
+          {activeTab === 'stickers' && (
+            <div>
+              <h3 className="text-xs font-serif italic text-[#bcaaa4] uppercase tracking-wider mb-2 flex items-center justify-between">
+                <span>Stickers</span>
+                <span className="text-[10px] text-stone-400 font-normal lowercase">click to add</span>
+              </h3>
+              <div className="grid grid-cols-3 gap-2 max-h-72 overflow-y-auto p-1">
+                {STICKER_CATALOG.map((st) => (
+                  <button
+                    key={st.type}
+                    onClick={() => addSticker(st.type)}
+                    className={`p-2 rounded-xl border border-[#4e342e] ${st.previewBg} hover:scale-105 active:scale-95 transition-all flex flex-col items-center justify-center space-y-1 shadow-xs group cursor-pointer`}
+                  >
+                    <StickerGraphic type={st.type} className="w-10 h-10 pointer-events-none" />
+                    <span className="text-[9px] font-medium text-stone-800 truncate w-full text-center">
+                      {st.label}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* TAB 2: PHOTO UPLOAD */}
+          {activeTab === 'photos' && (
+            <div className="space-y-3">
+              <h3 className="text-xs font-serif italic text-[#bcaaa4] uppercase tracking-wider">
+                Photo Frames & Border Options
+              </h3>
+
+              {/* Frame Style Selector */}
+              <div>
+                <span className="text-[10px] text-[#bcaaa4] block mb-1.5 font-serif uppercase tracking-wider">
+                  Select Frame Style:
+                </span>
+                <div className="grid grid-cols-2 gap-1.5 mb-2">
+                  {FRAME_STYLES.map((frame) => (
+                    <button
+                      key={frame.id}
+                      onClick={() => setSelectedFrameStyle(frame.id)}
+                      className={`p-1.5 rounded-lg border text-left text-[10px] flex items-center space-x-1.5 transition-all cursor-pointer ${
+                        selectedFrameStyle === frame.id
+                          ? 'bg-[#8d6e63] border-[#bcaaa4] text-white font-bold shadow-xs'
+                          : 'bg-[#1c1a18] border-[#4e342e] text-[#e0ddd7] hover:bg-[#3a3733]'
+                      }`}
+                    >
+                      <span className="text-xs">{frame.icon}</span>
+                      <span className="truncate">{frame.name}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleFileUpload}
+                className="hidden"
+              />
+
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="w-full py-3.5 border border-dashed border-[#8d6e63] rounded-xl bg-[#1c1a18]/60 hover:bg-[#1c1a18] text-[#e0ddd7] flex flex-col items-center justify-center space-y-1.5 transition-all cursor-pointer group"
+              >
+                <div className="w-8 h-8 rounded-full bg-[#8d6e63]/40 flex items-center justify-center group-hover:scale-110 transition-transform">
+                  <Upload className="w-4 h-4 text-[#e0ddd7]" />
+                </div>
+                <span className="text-xs font-bold">Upload Local Photo</span>
+                <span className="text-[9px] text-stone-400">Apply selected frame</span>
+              </button>
+
+              <div className="border-t border-[#4e342e] pt-2.5">
+                <span className="text-[11px] text-[#bcaaa4] block mb-1.5 font-serif">Preset Memory Photos:</span>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => {
+                      const newItem: CanvasItem = {
+                        id: `photo-${Date.now()}`,
+                        type: 'photo',
+                        x: 22,
+                        y: 22,
+                        scale: 1,
+                        rotation: -3,
+                        zIndex: items.length + 1,
+                        url: "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?q=80&w=800&auto=format&fit=crop",
+                        caption: 'Beach Paradise 🌴',
+                        frameStyle: selectedFrameStyle,
+                      };
+                      updateItems([...items, newItem]);
+                      setSelectedItemId(newItem.id);
+                    }}
+                    className="p-1.5 bg-[#1c1a18] hover:bg-[#3a3733] border border-[#4e342e] rounded-lg text-[10px] font-medium text-[#e0ddd7] text-left flex items-center space-x-2 cursor-pointer"
+                  >
+                    <span>🏖️</span>
+                    <span>Tropical Beach</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      const newItem: CanvasItem = {
+                        id: `photo-${Date.now()}`,
+                        type: 'photo',
+                        x: 52,
+                        y: 28,
+                        scale: 1,
+                        rotation: 4,
+                        zIndex: items.length + 1,
+                        url: "https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?q=80&w=800&auto=format&fit=crop",
+                        caption: 'Mountain Peaks ⛰️',
+                        frameStyle: selectedFrameStyle,
+                      };
+                      updateItems([...items, newItem]);
+                      setSelectedItemId(newItem.id);
+                    }}
+                    className="p-1.5 bg-[#1c1a18] hover:bg-[#3a3733] border border-[#4e342e] rounded-lg text-[10px] font-medium text-[#e0ddd7] text-left flex items-center space-x-2 cursor-pointer"
+                  >
+                    <span>⛰️</span>
+                    <span>Mountains</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 3: STICKY NOTES */}
+          {activeTab === 'notes' && (
+            <div>
+              <h3 className="text-xs font-serif italic text-[#bcaaa4] uppercase tracking-wider mb-2">
+                Pastel Memory Notes
+              </h3>
+              <p className="text-[11px] text-stone-400 mb-3">
+                Click color to place on page:
+              </p>
+              
+              <div className="grid grid-cols-2 gap-2">
+                {(['yellow', 'mint', 'blue', 'pink', 'lavender', 'peach'] as StickyColor[]).map((col) => {
+                  const style = STICKY_COLOR_MAP[col];
+                  return (
+                    <button
+                      key={col}
+                      onClick={() => addStickyNote(col)}
+                      className={`p-2.5 rounded-lg border ${style.bg} ${style.text} ${style.border} font-handwriting text-base font-bold shadow-xs hover:scale-105 active:scale-95 transition-all text-left flex items-center justify-between cursor-pointer`}
+                    >
+                      <span className="capitalize">{col} Note</span>
+                      <Plus className="w-4 h-4" />
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* TAB 4: BACKGROUND THEMES */}
+          {activeTab === 'themes' && (
+            <div>
+              <h3 className="text-xs font-serif italic text-[#bcaaa4] uppercase tracking-wider mb-2">
+                Paper Style
+              </h3>
+              <div className="space-y-2">
+                {BACKGROUND_THEMES.map((theme) => (
+                  <button
+                    key={theme.id}
+                    onClick={() => setTheme(theme.id)}
+                    className={`w-full p-2 rounded-xl border flex items-center space-x-3 transition-all cursor-pointer ${
+                      currentTheme === theme.id
+                        ? 'bg-[#8d6e63] border-[#bcaaa4] text-white font-bold shadow-md'
+                        : 'bg-[#1c1a18] border-[#4e342e] text-[#e0ddd7] hover:bg-[#3a3733]'
+                    }`}
+                  >
+                    <span className="text-lg">{theme.icon}</span>
+                    <span className="text-xs font-serif">{theme.name}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* EDIT TOOLBAR FOR SELECTED ITEM */}
+          {selectedItem && (
+            <div className="mt-6 border-t border-[#4e342e] pt-4 bg-[#1c1a18]/80 p-3 rounded-xl border border-[#4e342e]">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[10px] font-serif uppercase tracking-widest text-[#bcaaa4]">
+                  Item Controls
+                </span>
+                <button
+                  onClick={deleteSelectedItem}
+                  className="p-1 rounded bg-red-900/80 hover:bg-red-800 text-red-100 transition-colors cursor-pointer"
+                  title="Delete item"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              {/* Rotation Slider */}
+              <div className="space-y-1 mb-2">
+                <div className="flex justify-between text-[10px] text-stone-300">
+                  <span className="flex items-center space-x-1"><RotateCw className="w-3 h-3" /> <span>Rotate</span></span>
+                  <span>{selectedItem.rotation}°</span>
+                </div>
+                <input
+                  type="range"
+                  min="-180"
+                  max="180"
+                  value={selectedItem.rotation}
+                  onChange={(e) => updateSelectedProp('rotation', parseInt(e.target.value))}
+                  className="w-full accent-[#8d6e63] cursor-pointer"
+                />
+              </div>
+
+              {/* Scale / Resize Slider */}
+              <div className="space-y-1 mb-2">
+                <div className="flex justify-between text-[10px] text-stone-300">
+                  <span className="flex items-center space-x-1"><ZoomIn className="w-3 h-3" /> <span>Scale</span></span>
+                  <span>{Math.round(selectedItem.scale * 100)}%</span>
+                </div>
+                <input
+                  type="range"
+                  min="0.5"
+                  max="2.0"
+                  step="0.05"
+                  value={selectedItem.scale}
+                  onChange={(e) => updateSelectedProp('scale', parseFloat(e.target.value))}
+                  className="w-full accent-[#8d6e63] cursor-pointer"
+                />
+              </div>
+
+              {/* Frame Style Switcher for Photos */}
+              {selectedItem.type === 'photo' && (
+                <div className="space-y-1 mb-3 pt-2 border-t border-[#4e342e]">
+                  <span className="text-[10px] text-[#bcaaa4] font-serif uppercase tracking-wider block mb-1">
+                    Switch Photo Frame Variant:
+                  </span>
+                  <div className="grid grid-cols-3 gap-1">
+                    {FRAME_STYLES.map((frame) => (
+                      <button
+                        key={frame.id}
+                        onClick={() => updateSelectedProp('frameStyle', frame.id)}
+                        className={`p-1 rounded text-[9px] flex flex-col items-center justify-center border transition-all cursor-pointer ${
+                          (selectedItem.frameStyle || 'polaroid') === frame.id
+                            ? 'bg-[#8d6e63] border-[#bcaaa4] text-white font-bold'
+                            : 'bg-[#2c2a27] border-[#4e342e] text-stone-300 hover:bg-[#3a3733]'
+                        }`}
+                        title={frame.name}
+                      >
+                        <span className="text-xs">{frame.icon}</span>
+                        <span className="truncate text-[8px] mt-0.5">{frame.name.split(' ')[0]}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Layer Z-Index */}
+              <button
+                onClick={bringToFront}
+                className="w-full py-1 bg-[#4e342e] hover:bg-[#3d2824] text-[#e0ddd7] rounded text-[10px] font-serif uppercase tracking-wider flex items-center justify-center space-x-1 cursor-pointer"
+              >
+                <Layers className="w-3 h-3" />
+                <span>Bring to Front</span>
+              </button>
+            </div>
+          )}
+        </aside>
+
+        {/* RIGHT: THE PHYSICAL OPEN JOURNAL CANVAS */}
+        <main className="w-full flex-1 relative">
+          <div
+            ref={canvasRef}
+            className={`w-full aspect-[4/3] min-h-[550px] md:min-h-[650px] artistic-journal-open p-6 md:p-10 relative overflow-hidden transition-all ${themeCssClass}`}
+            onClick={() => setSelectedItemId(null)}
+          >
+            {/* Center Book Spine and Stitches */}
+            <div className="artistic-spine"></div>
+            <div className="artistic-spine-stitches">
+              <div className="artistic-stitch"></div>
+              <div className="artistic-stitch"></div>
+              <div className="artistic-stitch"></div>
+              <div className="artistic-stitch"></div>
+              <div className="artistic-stitch"></div>
+              <div className="artistic-stitch"></div>
+              <div className="artistic-stitch"></div>
+              <div className="artistic-stitch"></div>
+            </div>
+
+            {/* Page Headers */}
+            <div className="flex justify-between font-serif text-[#8d6e63] text-xs font-bold border-b border-[#e0ddd7] pb-2 mb-4 pointer-events-none uppercase tracking-wider">
+              <span className="pl-4">📍 {location}</span>
+              <span className="pr-4">🗓️ {currentDateStr}</span>
+            </div>
+
+            {/* RENDER CANVAS ITEMS */}
+            {items.map((item) => {
+              const isSelected = item.id === selectedItemId;
+
+              return (
+                <div
+                  key={item.id}
+                  onPointerDown={(e) => handlePointerDown(e, item.id)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedItemId(item.id);
+                  }}
+                  style={{
+                    position: 'absolute',
+                    left: `${item.x}%`,
+                    top: `${item.y}%`,
+                    transform: `rotate(${item.rotation}deg) scale(${item.scale})`,
+                    transformOrigin: 'center center',
+                    zIndex: item.zIndex,
+                  }}
+                  className="cursor-grab active:cursor-grabbing group"
+                >
+                  {/* SELECTION HANDLE ACCORDING TO ARTISTIC FLAIR SPEC */}
+                  {isSelected && (
+                    <>
+                      <div className="selected-handle"></div>
+                      <div 
+                        className="rotate-handle cursor-pointer"
+                        title="Rotate 15°"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          updateSelectedProp('rotation', (item.rotation + 15) % 360);
+                        }}
+                      >
+                        ↻
+                      </div>
+                    </>
+                  )}
+
+                  {/* ITEM TYPE 1: STICKER */}
+                  {item.type === 'sticker' && item.stickerType && (
+                    <div className="p-1">
+                      <StickerGraphic type={item.stickerType} className="w-20 h-20 md:w-24 md:h-24 pointer-events-none" />
+                    </div>
+                  )}
+
+                  {/* ITEM TYPE 2: PHOTO WITH 6 FRAME & SHAPE VARIANTS */}
+                  {item.type === 'photo' && (() => {
+                    const frameStyle = item.frameStyle || 'polaroid';
+
+                    if (frameStyle === 'polaroid') {
+                      return (
+                        <div className="bg-white p-3 pt-4 pb-5 rounded shadow-xl border border-stone-200/80 max-w-[180px] md:max-w-[220px] relative">
+                          <div className="washi-tape absolute -top-3 left-1/2 -translate-x-1/2 w-16 h-5 transform -rotate-2 pointer-events-none"></div>
+                          <img
+                            src={item.url}
+                            alt="Scrapbook Memory"
+                            className="w-full h-32 md:h-40 object-cover rounded-xs border border-stone-200 pointer-events-none"
+                          />
+                          <input
+                            type="text"
+                            value={item.caption || ''}
+                            onChange={(e) => updateSelectedProp('caption', e.target.value)}
+                            placeholder="Add caption..."
+                            className="w-full text-center font-handwriting text-lg md:text-xl text-stone-800 bg-transparent focus:outline-none focus:bg-amber-50/50 rounded mt-2 truncate"
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        </div>
+                      );
+                    }
+
+                    if (frameStyle === 'vintage-tape') {
+                      return (
+                        <div className="bg-[#faf8f5] p-3 pt-4 pb-5 rounded shadow-xl border border-stone-200/80 max-w-[180px] md:max-w-[220px] relative">
+                          <div className="washi-tape absolute -top-3 -left-2 w-12 h-5 transform -rotate-12 pointer-events-none"></div>
+                          <div className="washi-tape absolute -top-3 -right-2 w-12 h-5 transform rotate-12 pointer-events-none"></div>
+                          <img
+                            src={item.url}
+                            alt="Scrapbook Memory"
+                            className="w-full h-32 md:h-40 object-cover rounded-xs border border-stone-200 pointer-events-none"
+                          />
+                          <input
+                            type="text"
+                            value={item.caption || ''}
+                            onChange={(e) => updateSelectedProp('caption', e.target.value)}
+                            placeholder="Add caption..."
+                            className="w-full text-center font-handwriting text-lg md:text-xl text-stone-800 bg-transparent focus:outline-none focus:bg-amber-50/50 rounded mt-2 truncate"
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        </div>
+                      );
+                    }
+
+                    if (frameStyle === 'torn-paper') {
+                      return (
+                        <div className="bg-[#fbf9f4] p-3 pt-4 pb-5 shadow-2xl max-w-[180px] md:max-w-[220px] relative frame-torn-paper border-2 border-dashed border-[#d7ccc8]">
+                          <img
+                            src={item.url}
+                            alt="Scrapbook Memory"
+                            className="w-full h-32 md:h-40 object-cover pointer-events-none border border-stone-300"
+                          />
+                          <input
+                            type="text"
+                            value={item.caption || ''}
+                            onChange={(e) => updateSelectedProp('caption', e.target.value)}
+                            placeholder="Add caption..."
+                            className="w-full text-center font-handwriting text-lg md:text-xl text-stone-800 bg-transparent focus:outline-none focus:bg-amber-50/50 rounded mt-2 truncate"
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        </div>
+                      );
+                    }
+
+                    if (frameStyle === 'circle') {
+                      return (
+                        <div className="flex flex-col items-center max-w-[170px] md:max-w-[200px]">
+                          <div className="w-32 h-32 md:w-40 md:h-40 rounded-full p-2 bg-[#f9f6f0] shadow-xl border-2 border-[#bcaaa4] flex items-center justify-center relative overflow-hidden">
+                            <img
+                              src={item.url}
+                              alt="Scrapbook Memory"
+                              className="w-full h-full object-cover rounded-full pointer-events-none"
+                            />
+                          </div>
+                          <input
+                            type="text"
+                            value={item.caption || ''}
+                            onChange={(e) => updateSelectedProp('caption', e.target.value)}
+                            placeholder="Add caption..."
+                            className="w-full text-center font-handwriting text-base md:text-lg text-stone-800 bg-white/90 border border-[#bcaaa4]/50 rounded-full px-2 py-0.5 mt-2 focus:outline-none truncate shadow-xs"
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        </div>
+                      );
+                    }
+
+                    if (frameStyle === 'postage-stamp') {
+                      return (
+                        <div className="bg-[#fcfbf7] p-2.5 shadow-xl max-w-[170px] md:max-w-[210px] relative border-4 border-dashed border-[#d7ccc8] rounded-xs">
+                          <div className="relative">
+                            <img
+                              src={item.url}
+                              alt="Scrapbook Stamp"
+                              className="w-full h-28 md:h-36 object-cover border border-stone-300 pointer-events-none"
+                            />
+                            <div className="absolute -bottom-2 -right-2 w-14 h-14 pointer-events-none opacity-70">
+                              <svg viewBox="0 0 100 100" className="w-full h-full text-[#4e342e] fill-current">
+                                <circle cx="50" cy="50" r="42" fill="none" stroke="currentColor" strokeWidth="3" strokeDasharray="4 2" />
+                                <path d="M 10 50 Q 50 20 90 50 Q 50 80 10 50" fill="none" stroke="currentColor" strokeWidth="2" />
+                                <text x="50" y="48" fontSize="11" textAnchor="middle" fontWeight="bold" fontFamily="serif">AIRMAIL</text>
+                                <text x="50" y="62" fontSize="9" textAnchor="middle" fontFamily="serif">PASSED</text>
+                              </svg>
+                            </div>
+                          </div>
+                          <input
+                            type="text"
+                            value={item.caption || ''}
+                            onChange={(e) => updateSelectedProp('caption', e.target.value)}
+                            placeholder="Stamp note..."
+                            className="w-full text-center font-serif text-xs md:text-sm text-stone-700 bg-transparent focus:outline-none mt-1.5 truncate uppercase tracking-widest"
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        </div>
+                      );
+                    }
+
+                    if (frameStyle === 'rounded-gold') {
+                      return (
+                        <div className="bg-[#2c2a27] p-2 md:p-3 rounded-2xl shadow-2xl border-2 border-[#d4af37] max-w-[180px] md:max-w-[220px] relative">
+                          <img
+                            src={item.url}
+                            alt="Scrapbook Memory"
+                            className="w-full h-32 md:h-40 object-cover rounded-xl pointer-events-none"
+                          />
+                          <input
+                            type="text"
+                            value={item.caption || ''}
+                            onChange={(e) => updateSelectedProp('caption', e.target.value)}
+                            placeholder="Memory label..."
+                            className="w-full text-center font-serif italic text-sm md:text-base text-[#e0ddd7] bg-transparent focus:outline-none mt-2 truncate"
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        </div>
+                      );
+                    }
+
+                    return null;
+                  })()}
+
+                  {/* ITEM TYPE 3: STICKY NOTE */}
+                  {item.type === 'sticky-note' && item.color && (
+                    <div className={`p-4 rounded-md shadow-xl border max-w-[200px] md:max-w-[240px] min-w-[160px] relative ${STICKY_COLOR_MAP[item.color].bg} ${STICKY_COLOR_MAP[item.color].text} ${STICKY_COLOR_MAP[item.color].border}`}>
+                      {/* Small tape accent on note */}
+                      <div className="washi-tape absolute -top-2.5 left-4 w-12 h-4 transform rotate-6 pointer-events-none"></div>
+
+                      <textarea
+                        value={item.text || ''}
+                        onChange={(e) => updateSelectedProp('text', e.target.value)}
+                        placeholder="Write your note here..."
+                        rows={3}
+                        className="w-full bg-transparent font-handwriting text-lg md:text-xl focus:outline-none resize-none leading-snug"
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {/* Empty Canvas Hint */}
+            {items.length === 0 && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none opacity-40 text-[#8d6e63]">
+                <span className="text-4xl mb-2">📸</span>
+                <p className="font-serif italic text-lg">
+                  This journal page is blank.
+                </p>
+                <p className="font-handwriting text-xl">
+                  Choose stickers, photos, or sticky notes from the toolbar to decorate!
+                </p>
+              </div>
+            )}
+          </div>
+        </main>
+      </div>
+    </div>
+  );
+};
